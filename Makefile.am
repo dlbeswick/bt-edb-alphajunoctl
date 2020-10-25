@@ -1,11 +1,13 @@
 ACLOCAL_AMFLAGS = -I m4
 
 SRC = src/alphajunoctl.c src/generated/generated-genums.c src/voice.c
+BUILT_SOURCES = src/generated/generated-genums.h src/generated/generated-genums.c
+CLEANFILES = $(BUILT_SOURCES)
 
 plugin_LTLIBRARIES = libalphajunoctl.la
 
 libalphajunoctl_la_SOURCES = $(SRC)
-libalphajunoctl_la_CFLAGS = $(DEBUG_CFLAGS) $(BASE_DEPS_CFLAGS) -I $(prefix)/include -std=c99
+libalphajunoctl_la_CFLAGS = $(DEBUG_CFLAGS) $(BASE_DEPS_CFLAGS) -I $(prefix)/include -std=c99 -Werror=all -Wno-error=unused-variable
 libalphajunoctl_la_LDFLAGS = -module -avoid-version
 #libalphajunoctl_la_LIBADD = any-extra-libs.la...
 
@@ -32,7 +34,3 @@ src/generated/generated-genums.c: src/genums.h src/generated-genums.c.in src/gen
 		--output=$@ \
 		$(top_srcdir)/src/genums.h
 	test -f $@ || { echo "ERROR, file not generated"; exit 1; }
-
-# Build the enum types files before every other target
-BUILT_SOURCES = src/generated/generated-genums.h src/generated/generated-genums.c
-CLEANFILES = src/generated/generated-genums.h src/generated/generated-genums.c
