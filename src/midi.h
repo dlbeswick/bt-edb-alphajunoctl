@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <unistd.h>
 
 inline void _midi_write(int fd, const void* buf, int size) {

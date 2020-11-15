@@ -2,8 +2,10 @@
 #include "src/alphajunoctl.h"
 #include "src/genums.h"
 #include "src/midi.h"
+#include "src/voice.h"
 #include "src/generated/generated-genums.h"
 
+#include "libbuzztrax-gst/audiosynth.h"
 #include "libbuzztrax-gst/childbin.h"
 #include "libbuzztrax-gst/propertymeta.h"
 #include <stdio.h>
@@ -19,13 +21,13 @@ enum { MAX_VOICES = 6 };
 
 typedef struct
 {
-  GstElementClass parent_class;
+  GstBtAudioSynthClass parent_class;
 } GstBtAlphaJunoCtlClass;
 
 // Class instance data.
 typedef struct
 {
-  GstElement parent;
+  GstBtAudioSynth parent;
 
   int fd_midi;
   
@@ -103,9 +105,9 @@ static void gstbt_alphajunoctl_child_proxy_interface_init (gpointer g_iface, gpo
 G_DEFINE_TYPE_WITH_CODE (
   GstBtAlphaJunoCtl,
   gstbt_alphajunoctl,
-  GST_TYPE_ELEMENT,
+  GSTBT_TYPE_AUDIO_SYNTH,
   G_IMPLEMENT_INTERFACE (GST_TYPE_CHILD_PROXY, gstbt_alphajunoctl_child_proxy_interface_init)
-  G_IMPLEMENT_INTERFACE (GSTBT_TYPE_CHILD_BIN, NULL));
+  G_IMPLEMENT_INTERFACE (GSTBT_TYPE_CHILD_BIN, NULL))
 
 static gboolean plugin_init(GstPlugin * plugin) {
   GST_DEBUG_CATEGORY_INIT(
@@ -126,7 +128,7 @@ GST_PLUGIN_DEFINE(
   GST_VERSION_MINOR,
   alphajunoctl,
   GST_MACHINE_DESC,
-  plugin_init, VERSION, "GPL", PACKAGE_NAME, PACKAGE_BUGREPORT);
+  plugin_init, VERSION, "GPL", PACKAGE_NAME, PACKAGE_BUGREPORT)
 
 
 /*
@@ -172,23 +174,23 @@ GST_PLUGIN_DEFINE(
 
 inline void _midi_write_byte(int fd, int midichannel, unsigned char status, unsigned char control,
 							 unsigned short value) {
-  const char cmd[] = {(status << 4) | midichannel, control, value};
+  const guchar cmd[] = {(status << 4) | midichannel, control, value};
   _midi_write(fd, cmd, sizeof(cmd));
 }
 
 inline void _midi_write_switch(int fd, int midichannel, unsigned char status, unsigned char control,
 							   unsigned short value) {
-  const char cmd[] = {(status << 4) | midichannel, control, value << 6};
+  const guchar cmd[] = {(status << 4) | midichannel, control, value << 6};
   _midi_write(fd, cmd, sizeof(cmd));
 }
 
 inline void _midi_write_14bit(int fd, int midichannel, unsigned char status, unsigned short value) {
-  const char cmd[] = {(status << 4) | midichannel, value & 0x007F, value >> 7};
+  const guchar cmd[] = {(status << 4) | midichannel, value & 0x007F, value >> 7};
   _midi_write(fd, cmd, sizeof(cmd));
 }
 
 inline void _midi_write_toneparam(int fd, int midichannel, unsigned char param, unsigned char value) {
-  const char cmd[] = {0xF0, 0x41, 0x36, midichannel, 0x23, 0x20, 0x01, param, value, 0xF7};
+  const guchar cmd[] = {0xF0, 0x41, 0x36, midichannel, 0x23, 0x20, 0x01, param, value, 0xF7};
   _midi_write(fd, cmd, sizeof(cmd));
 }
 
@@ -242,12 +244,20 @@ enum
 };
 static GParamSpec *properties[N_PROPERTIES] = { NULL, };
 
-static void _retransmit(GObject* const self) {
+static void _noteall_off(GstBtAlphaJunoCtl* self) {
+  for (int i = 0; i < MAX_VOICES; ++i) {
+	gstbt_alphajunoctlv_noteall_off(self->voices[i]);
+  }
+}
+
+static void _retransmit(GstBtAlphaJunoCtl* const self) {
+  _noteall_off(self);
+  
   for (int i = PROP_BENDERRANGE; i <= PROP_MAINVOLUME; ++i) {
 	const gchar* name = g_param_spec_get_name(properties[i]);
 	GValue val = G_VALUE_INIT;
-	g_object_get_property(self, name, &val);
-	g_object_set_property(self, name, &val);
+	g_object_get_property((GObject*)self, name, &val);
+	g_object_set_property((GObject*)self, name, &val);
 	g_value_unset(&val);
   }
 }
@@ -259,8 +269,12 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
   case PROP_CHILDREN:
 	self->cntVoices = g_value_get_ulong(value);
 	break;
-  case PROP_MIDI_DEVICE_NO:
-	self->midi_device_no = g_value_get_uint(value);
+  case PROP_MIDI_DEVICE_NO: {
+	guint new_val = g_value_get_uint(value);
+	if (self->fd_midi != -1 && new_val == self->midi_device_no)
+	  break;
+	
+	self->midi_device_no = new_val;
 	if (self->fd_midi != -1) {
 	  close(self->fd_midi);
 	  self->fd_midi = -1;
@@ -276,7 +290,8 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
 	if (self->fd_midi == -1)
 	  g_warning("MIDI device '%s' failed to open (%s)", device, strerror(errno));
 	else
-	  _retransmit(G_OBJECT(self));
+	  _retransmit(self);
+  }
 	break;
   case PROP_BENDERRANGE:
 	self->benderRange = g_value_get_uint(value);
@@ -428,7 +443,7 @@ static void _set_property (GObject * object, guint prop_id, const GValue * value
     break;
   case PROP_PORTAMENTO:
     self->portamento = g_value_get_boolean(value);
-    _midi_write_byte(self->fd_midi, 0, 0x0B, 0x41, self->portamento);
+    _midi_write_switch(self->fd_midi, 0, 0x0B, 0x41, self->portamento);
     break;
   case PROP_PORTAMENTOTIME:
     self->portamentoTime = g_value_get_uint(value);
@@ -587,17 +602,45 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
   }
 }
 
-static GstStaticPadTemplate template_dummy =
-  GST_STATIC_PAD_TEMPLATE(
-	"dummy",
-	GST_PAD_SRC,
-	GST_PAD_REQUEST,
-	GST_STATIC_CAPS_ANY);
+static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
+  GstBtAlphaJunoCtl *self = GSTBT_ALPHAJUNOCTL(synth);
+
+  // Parameter group's pattern control source seems not to be called.
+  for (int i = 0; i < self->cntVoices; ++i) {
+	gstbt_alphajunoctlv_process(self->voices[i], gstbuf);
+    gst_object_sync_values((GstObject*)self->voices[i], GST_BUFFER_TIMESTAMP(gstbuf));
+  }
+
+  memset(info->data, 0, synth->generate_samples_per_buffer*sizeof(gint16));
+  return TRUE;
+}
+
+static void _negotiate (GstBtAudioSynth* base, GstCaps* caps) {
+  for (gint i = 0; i < gst_caps_get_size(caps); ++i) {
+    gst_structure_fixate_field_nearest_int(
+	  gst_caps_get_structure (caps, i),
+	  "channels",
+	  1);
+  }
+}
+
+static void _dispose (GObject* object) {
+  GstBtAlphaJunoCtl* self = GSTBT_ALPHAJUNOCTL(object);
+  
+  // It's necessary to unparent children so they will be unreffed and cleaned up. GstObject doesn't hold variable
+  // links to its children, so wouldn't know to unparent them.
+  for (int i = 0; i < MAX_VOICES; i++) {
+	gst_object_unparent((GstObject*)self->voices[i]);
+  }
+
+  G_OBJECT_CLASS(gstbt_alphajunoctl_parent_class)->dispose(object);
+}
 
 static void gstbt_alphajunoctl_class_init(GstBtAlphaJunoCtlClass * const klass) {
   GObjectClass* const gobject_class = (GObjectClass *) klass;
   gobject_class->set_property = _set_property;
   gobject_class->get_property = _get_property;
+  gobject_class->dispose = _dispose;
 
   GstElementClass* const element_class = (GstElementClass *) klass;
   gst_element_class_set_static_metadata(
@@ -605,21 +648,20 @@ static void gstbt_alphajunoctl_class_init(GstBtAlphaJunoCtlClass * const klass) 
 	"Alpha Juno Control",
 	"Source/Audio",
 	GST_MACHINE_DESC,
-	"David Beswick <" PACKAGE_BUGREPORT ">");
+	PACKAGE_BUGREPORT);
 
-  gst_element_class_add_pad_template(element_class, gst_static_pad_template_get(&template_dummy));
- 
-/*  audio_synth_class->process = gstbt_sim_syn_process;
-	audio_synth_class->reset = gstbt_sim_syn_reset;
-	audio_synth_class->negotiate = gstbt_sim_syn_negotiate;
+  GstBtAudioSynthClass *audio_synth_class = (GstBtAudioSynthClass *) klass;
+  audio_synth_class->process = _process;
+  /*audio_synth_class->reset = gstbt_sim_syn_reset;*/
+  audio_synth_class->negotiate = _negotiate;
 
 	// TBD: docs
-  gst_element_class_add_metadata (element_class, GST_ELEMENT_METADATA_DOC_URI,
+/*  gst_element_class_add_metadata (element_class, GST_ELEMENT_METADATA_DOC_URI,
 "file://" DATADIR "" G_DIR_SEPARATOR_S "gtk-doc" G_DIR_SEPARATOR_S "html"
 G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
   const GParamFlags flags =
-	(GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
+	(GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
   
   // GstBtChildBin interface properties
   properties[PROP_CHILDREN] = g_param_spec_ulong(
@@ -728,8 +770,6 @@ G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 }
 
 static void gstbt_alphajunoctl_init (GstBtAlphaJunoCtl* const self) {
-  gst_element_add_pad(GST_ELEMENT(self), gst_pad_new_from_static_template(&template_dummy, "dummy"));
-
   self->fd_midi = -1;
   
   for (int i = 0; i < MAX_VOICES; i++) {
@@ -743,17 +783,6 @@ static void gstbt_alphajunoctl_init (GstBtAlphaJunoCtl* const self) {
   }
 }
 
-/*static void _dispose (GObject * object) {
-  GstBtAlphaJunoCtl *self = GSTBT_ALPHAJUNOCTL(object);
-  
-  for (int i = 0; i < MAX_VOICES; i++) {
-	gst_object_unparent((GstObject *)self->voices[i]);
-  }
-
-  G_OBJECT_CLASS(gstbt_alphajunoctl_parent_class)->dispose(object);
-  }*/
-
 int gstbt_alphajunoctl_midiout_get(GstBtAlphaJunoCtl* const self) {
   return self->fd_midi;
 }
-

@@ -1,6 +1,7 @@
 /*** BEGIN file-header ***/
 #include "config.h"
 #include "src/genums.h"
+#include "src/generated/generated-genums.h"
 #include <glib-object.h>
 
 /*** END file-header ***/
