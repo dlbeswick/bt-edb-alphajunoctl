@@ -114,7 +114,10 @@ static void _get_property (GObject* const object, const guint prop_id, GValue* c
 
 void gstbt_alphajunoctlv_process(GstBtAlphaJunoCtlV* const self, GstBuffer* const gstbuf) {
   // Necessary to update parameters from pattern.
-  gst_object_sync_values((GstObject*)self, GST_BUFFER_TIMESTAMP(gstbuf));
+  //
+  // The parent machine is responsible for delgating process to any children it has; the pattern control group
+  // won't have called it for each voice. Although maybe it should?
+  gst_object_sync_values((GstObject*)self, GST_BUFFER_PTS(gstbuf));
 }
 
 void gstbt_alphajunoctlv_noteall_off(GstBtAlphaJunoCtlV* const self) {

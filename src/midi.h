@@ -1,3 +1,4 @@
+#include <glib.h>
 #include <errno.h>
 #include <unistd.h>
 

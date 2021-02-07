@@ -1,5 +1,4 @@
 #include "config.h"
-#include "src/alphajunoctl.h"
 #include "src/genums.h"
 #include "src/midi.h"
 #include "src/voice.h"
@@ -12,11 +11,14 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+GType gstbt_alphajunoctl_get_type(void);
+#define GSTBT_ALPHAJUNOCTL(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj),gstbt_alphajunoctl_get_type(),GstBtAlphaJunoCtl))
+
 #define GST_MACHINE_NAME "alphajunoctl"
 #define GST_MACHINE_DESC "Controller for real Alpha Juno synth via MIDI"
 
 GST_DEBUG_CATEGORY (alphajunoctl_debug);
-
+ 
 enum { MAX_VOICES = 6 };
 
 typedef struct
@@ -605,10 +607,8 @@ static void _get_property (GObject * object, guint prop_id, GValue * value, GPar
 static gboolean _process (GstBtAudioSynth* synth, GstBuffer* gstbuf, GstMapInfo* info) {
   GstBtAlphaJunoCtl *self = GSTBT_ALPHAJUNOCTL(synth);
 
-  // Parameter group's pattern control source seems not to be called.
   for (int i = 0; i < self->cntVoices; ++i) {
 	gstbt_alphajunoctlv_process(self->voices[i], gstbuf);
-    gst_object_sync_values((GstObject*)self->voices[i], GST_BUFFER_TIMESTAMP(gstbuf));
   }
 
   memset(info->data, 0, synth->generate_samples_per_buffer*sizeof(gint16));
@@ -660,8 +660,9 @@ static void gstbt_alphajunoctl_class_init(GstBtAlphaJunoCtlClass * const klass) 
 "file://" DATADIR "" G_DIR_SEPARATOR_S "gtk-doc" G_DIR_SEPARATOR_S "html"
 G_DIR_SEPARATOR_S "" PACKAGE "-gst" G_DIR_SEPARATOR_S "GstBtSimSyn.html");*/
 
+  // Note: variables will not be set to default values unless G_PARAM_CONSTRUCT is given.
   const GParamFlags flags =
-	(GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS);
+    (GParamFlags)(G_PARAM_READWRITE | GST_PARAM_CONTROLLABLE | G_PARAM_STATIC_STRINGS | G_PARAM_CONSTRUCT);
   
   // GstBtChildBin interface properties
   properties[PROP_CHILDREN] = g_param_spec_ulong(
